@@ -1,5 +1,13 @@
 use std::path::PathBuf;
 
+use codex_protocol::approvals::GuardianApplyPatchAssessmentAction;
+use codex_protocol::approvals::GuardianAssessmentAction;
+use codex_protocol::approvals::GuardianAssessmentCommand;
+use codex_protocol::approvals::GuardianCommandAssessmentAction;
+#[cfg(unix)]
+use codex_protocol::approvals::GuardianExecveAssessmentAction;
+use codex_protocol::approvals::GuardianMcpToolCallAssessmentAction;
+use codex_protocol::approvals::GuardianNetworkAccessAssessmentAction;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -146,11 +154,17 @@ fn serialize_command_guardian_action(
     })
 }
 
-fn command_assessment_action_value(tool: &'static str, command: &[String], cwd: &PathBuf) -> Value {
-    serde_json::json!({
-        "tool": tool,
-        "command": codex_shell_command::parse_command::shlex_join(command),
-        "cwd": cwd,
+fn command_assessment_action(
+    tool: &'static str,
+    command: &[String],
+    cwd: &PathBuf,
+) -> GuardianAssessmentAction {
+    GuardianAssessmentAction::Command(GuardianCommandAssessmentAction {
+        tool: tool.to_string(),
+        command: GuardianAssessmentCommand::String(codex_shell_command::parse_command::shlex_join(
+            command,
+        )),
+        cwd: cwd.clone(),
     })
 }
 
@@ -285,13 +299,15 @@ pub(crate) fn guardian_approval_request_to_json(
     }
 }
 
-pub(crate) fn guardian_assessment_action_value(action: &GuardianApprovalRequest) -> Value {
+pub(crate) fn guardian_assessment_action(
+    action: &GuardianApprovalRequest,
+) -> GuardianAssessmentAction {
     match action {
         GuardianApprovalRequest::Shell { command, cwd, .. } => {
-            command_assessment_action_value("shell", command, cwd)
+            command_assessment_action("shell", command, cwd)
         }
         GuardianApprovalRequest::ExecCommand { command, cwd, .. } => {
-            command_assessment_action_value("exec_command", command, cwd)
+            command_assessment_action("exec_command", command, cwd)
         }
         #[cfg(unix)]
         GuardianApprovalRequest::Execve {
@@ -300,22 +316,22 @@ pub(crate) fn guardian_assessment_action_value(action: &GuardianApprovalRequest)
             argv,
             cwd,
             ..
-        } => serde_json::json!({
-            "tool": tool_name,
-            "program": program,
-            "argv": argv,
-            "cwd": cwd,
+        } => GuardianAssessmentAction::Execve(GuardianExecveAssessmentAction {
+            tool: tool_name.clone(),
+            program: program.clone(),
+            argv: argv.clone(),
+            cwd: cwd.clone(),
         }),
         GuardianApprovalRequest::ApplyPatch {
             cwd,
             files,
             change_count,
             ..
-        } => serde_json::json!({
-            "tool": "apply_patch",
-            "cwd": cwd,
-            "files": files,
-            "change_count": change_count,
+        } => GuardianAssessmentAction::ApplyPatch(GuardianApplyPatchAssessmentAction {
+            tool: "apply_patch".to_string(),
+            cwd: cwd.clone(),
+            files: files.iter().map(|path| path.to_path_buf()).collect(),
+            change_count: *change_count,
         }),
         GuardianApprovalRequest::NetworkAccess {
             id: _,
@@ -324,19 +340,19 @@ pub(crate) fn guardian_assessment_action_value(action: &GuardianApprovalRequest)
             host,
             protocol,
             port,
-        } => serde_json::json!({
-            "tool": "network_access",
-            "target": target,
-            "host": host,
-            "protocol": protocol,
-            "port": port,
+        } => GuardianAssessmentAction::NetworkAccess(GuardianNetworkAccessAssessmentAction {
+            tool: "network_access".to_string(),
+            target: target.clone(),
+            host: host.clone(),
+            protocol: *protocol,
+            port: *port,
         }),
         GuardianApprovalRequest::McpToolCall {
             server, tool_name, ..
-        } => serde_json::json!({
-            "tool": "mcp_tool_call",
-            "server": server,
-            "tool_name": tool_name,
+        } => GuardianAssessmentAction::McpToolCall(GuardianMcpToolCallAssessmentAction {
+            tool: "mcp_tool_call".to_string(),
+            server: server.clone(),
+            tool_name: tool_name.clone(),
         }),
     }
 }

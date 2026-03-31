@@ -317,11 +317,14 @@ async fn handle_exec_approval_uses_call_id_for_guardian_review_and_approval_id_f
             risk_score: None,
             risk_level: None,
             rationale: None,
-            action: Some(json!({
-                "tool": "shell",
-                "command": "rm -rf tmp",
-                "cwd": "/tmp",
-            })),
+            action: Some(
+                serde_json::from_value(json!({
+                    "tool": "shell",
+                    "command": "rm -rf tmp",
+                    "cwd": "/tmp",
+                }))
+                .expect("guardian action")
+            ),
         }
     );
 

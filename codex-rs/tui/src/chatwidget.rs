@@ -3261,9 +3261,13 @@ impl ChatWidget {
     /// render the final approved/denied history cell when guardian returns a
     /// decision.
     fn on_guardian_assessment(&mut self, ev: GuardianAssessmentEvent) {
-        // Guardian emits a compact JSON action payload; map the stable fields we
-        // care about into a short footer/history summary without depending on
-        // the full raw JSON shape in the rest of the widget.
+        // Guardian emits a compact typed action payload. Convert it back to the
+        // existing compact JSON shape here so footer/history rendering can keep
+        // using the same summary logic.
+        let action = ev
+            .action
+            .as_ref()
+            .and_then(|value| serde_json::to_value(value).ok());
         let guardian_action_summary = |action: &serde_json::Value| {
             let tool = action.get("tool").and_then(serde_json::Value::as_str)?;
             match tool {
@@ -3338,7 +3342,7 @@ impl ChatWidget {
         };
 
         if ev.status == GuardianAssessmentStatus::InProgress
-            && let Some(action) = ev.action.as_ref()
+            && let Some(action) = action.as_ref()
             && let Some(detail) = guardian_action_summary(action)
         {
             // In-progress assessments own the live footer state while the
@@ -3381,7 +3385,7 @@ impl ChatWidget {
         }
 
         if ev.status == GuardianAssessmentStatus::Approved {
-            let Some(action) = ev.action else {
+            let Some(action) = action else {
                 return;
             };
 
@@ -3407,7 +3411,7 @@ impl ChatWidget {
         if ev.status != GuardianAssessmentStatus::Denied {
             return;
         }
-        let Some(action) = ev.action else {
+        let Some(action) = action else {
             return;
         };
 
@@ -6809,7 +6813,7 @@ impl ChatWidget {
                 }
             }),
             rationale: review.rationale,
-            action,
+            action: action.and_then(|value| serde_json::from_value(value).ok()),
         });
     }
 

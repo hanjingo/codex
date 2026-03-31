@@ -223,6 +223,10 @@ fn guardian_auto_approval_review_notification(
         risk_level: assessment.risk_level.map(Into::into),
         rationale: assessment.rationale.clone(),
     };
+    let action = assessment
+        .action
+        .as_ref()
+        .and_then(|value| serde_json::to_value(value).ok());
     match assessment.status {
         codex_protocol::protocol::GuardianAssessmentStatus::InProgress => {
             ServerNotification::ItemGuardianApprovalReviewStarted(
@@ -231,7 +235,7 @@ fn guardian_auto_approval_review_notification(
                     turn_id,
                     target_item_id: assessment.id.clone(),
                     review,
-                    action: assessment.action.clone(),
+                    action,
                 },
             )
         }
@@ -244,7 +248,7 @@ fn guardian_auto_approval_review_notification(
                     turn_id,
                     target_item_id: assessment.id.clone(),
                     review,
-                    action: assessment.action.clone(),
+                    action,
                 },
             )
         }
@@ -2907,6 +2911,7 @@ mod tests {
         let action = json!({
             "tool": "shell",
             "command": "rm -rf /tmp/example.sqlite",
+            "cwd": "/tmp",
         });
         let notification = guardian_auto_approval_review_notification(
             &conversation_id,
@@ -2918,7 +2923,7 @@ mod tests {
                 risk_score: None,
                 risk_level: None,
                 rationale: None,
-                action: Some(action.clone()),
+                action: Some(serde_json::from_value(action.clone()).expect("guardian action")),
             },
         );
 
@@ -2946,6 +2951,7 @@ mod tests {
         let action = json!({
             "tool": "shell",
             "command": "rm -rf /tmp/example.sqlite",
+            "cwd": "/tmp",
         });
         let notification = guardian_auto_approval_review_notification(
             &conversation_id,
@@ -2957,7 +2963,7 @@ mod tests {
                 risk_score: Some(91),
                 risk_level: Some(codex_protocol::protocol::GuardianRiskLevel::High),
                 rationale: Some("too risky".to_string()),
-                action: Some(action.clone()),
+                action: Some(serde_json::from_value(action.clone()).expect("guardian action")),
             },
         );
 
@@ -2985,6 +2991,9 @@ mod tests {
         let action = json!({
             "tool": "network_access",
             "target": "api.openai.com:443",
+            "host": "api.openai.com",
+            "protocol": "https",
+            "port": 443,
         });
         let notification = guardian_auto_approval_review_notification(
             &conversation_id,
@@ -2996,7 +3005,7 @@ mod tests {
                 risk_score: None,
                 risk_level: None,
                 rationale: None,
-                action: Some(action.clone()),
+                action: Some(serde_json::from_value(action.clone()).expect("guardian action")),
             },
         );
 

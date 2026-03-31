@@ -318,7 +318,7 @@ fn guardian_approval_request_to_json_renders_mcp_tool_call_shape() -> serde_json
 }
 
 #[test]
-fn guardian_assessment_action_value_redacts_apply_patch_patch_text() {
+fn guardian_assessment_action_redacts_apply_patch_patch_text() {
     let (cwd, file) = if cfg!(windows) {
         (r"C:\tmp", r"C:\tmp\guardian.txt")
     } else {
@@ -336,13 +336,13 @@ fn guardian_assessment_action_value_redacts_apply_patch_patch_text() {
     };
 
     assert_eq!(
-        guardian_assessment_action_value(&action),
+        serde_json::to_value(guardian_assessment_action(&action)).expect("serialize action"),
         serde_json::json!({
             "tool": "apply_patch",
             "cwd": cwd,
             "files": [file],
             "change_count": 1,
-        })
+        }),
     );
 }
 

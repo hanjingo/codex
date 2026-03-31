@@ -18,7 +18,7 @@ use super::GUARDIAN_APPROVAL_RISK_THRESHOLD;
 use super::GUARDIAN_REVIEWER_NAME;
 use super::GuardianApprovalRequest;
 use super::GuardianAssessment;
-use super::approval_request::guardian_assessment_action_value;
+use super::approval_request::guardian_assessment_action;
 use super::approval_request::guardian_request_id;
 use super::approval_request::guardian_request_turn_id;
 use super::prompt::build_guardian_prompt_items;
@@ -81,7 +81,7 @@ async fn run_guardian_review(
 ) -> ReviewDecision {
     let assessment_id = guardian_request_id(&request).to_string();
     let assessment_turn_id = guardian_request_turn_id(&request, &turn.sub_id).to_string();
-    let action_summary = guardian_assessment_action_value(&request);
+    let action_summary = guardian_assessment_action(&request);
     session
         .send_event(
             turn.as_ref(),

@@ -98,6 +98,64 @@ pub enum GuardianAssessmentStatus {
     Aborted,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+#[serde(untagged)]
+pub enum GuardianAssessmentCommand {
+    String(String),
+    Argv(Vec<String>),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct GuardianCommandAssessmentAction {
+    pub tool: String,
+    pub command: GuardianAssessmentCommand,
+    pub cwd: PathBuf,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct GuardianExecveAssessmentAction {
+    pub tool: String,
+    pub program: String,
+    pub argv: Vec<String>,
+    pub cwd: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct GuardianApplyPatchAssessmentAction {
+    pub tool: String,
+    pub cwd: PathBuf,
+    pub files: Vec<PathBuf>,
+    pub change_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct GuardianNetworkAccessAssessmentAction {
+    pub tool: String,
+    pub target: String,
+    pub host: String,
+    pub protocol: NetworkApprovalProtocol,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct GuardianMcpToolCallAssessmentAction {
+    pub tool: String,
+    pub server: String,
+    pub tool_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+#[serde(untagged)]
+pub enum GuardianAssessmentAction {
+    #[cfg(unix)]
+    Execve(GuardianExecveAssessmentAction),
+    Command(GuardianCommandAssessmentAction),
+    ApplyPatch(GuardianApplyPatchAssessmentAction),
+    NetworkAccess(GuardianNetworkAccessAssessmentAction),
+    McpToolCall(GuardianMcpToolCallAssessmentAction),
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
 pub struct NetworkPolicyAmendment {
     pub host: String,
@@ -130,7 +188,7 @@ pub struct GuardianAssessmentEvent {
     /// reviewed request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub action: Option<JsonValue>,
+    pub action: Option<GuardianAssessmentAction>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -302,4 +360,47 @@ pub struct ApplyPatchApprovalRequestEvent {
     /// When set, the agent is asking the user to allow writes under this root for the remainder of the session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn guardian_assessment_action_deserializes_legacy_shell_shape() {
+        let action: GuardianAssessmentAction = serde_json::from_value(serde_json::json!({
+            "tool": "shell",
+            "command": "rm -rf /tmp/guardian",
+            "cwd": "/tmp",
+        }))
+        .expect("guardian action");
+
+        assert_eq!(
+            action,
+            GuardianAssessmentAction::Command(GuardianCommandAssessmentAction {
+                tool: "shell".to_string(),
+                command: GuardianAssessmentCommand::String("rm -rf /tmp/guardian".to_string()),
+                cwd: PathBuf::from("/tmp"),
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guardian_assessment_action_round_trips_execve_shape() {
+        let value = serde_json::json!({
+            "tool": "shell",
+            "program": "/bin/rm",
+            "argv": ["/usr/bin/rm", "-f", "/tmp/file.sqlite"],
+            "cwd": "/tmp",
+        });
+        let action: GuardianAssessmentAction =
+            serde_json::from_value(value.clone()).expect("guardian action");
+
+        assert_eq!(
+            serde_json::to_value(action).expect("serialize guardian action"),
+            value
+        );
+    }
 }
