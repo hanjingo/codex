@@ -27,6 +27,7 @@ use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::require_attached_executor;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::PostToolUsePayload;
@@ -232,6 +233,7 @@ impl ToolHandler for ShellHandler {
             payload,
             ..
         } = invocation;
+        require_attached_executor(turn.environment.as_ref(), tool_name.as_str())?;
 
         match payload {
             ToolPayload::Function { arguments } => {
@@ -340,6 +342,7 @@ impl ToolHandler for ShellCommandHandler {
             payload,
             ..
         } = invocation;
+        require_attached_executor(turn.environment.as_ref(), tool_name.as_str())?;
 
         let ToolPayload::Function { arguments } = payload else {
             return Err(FunctionCallError::RespondToModel(format!(

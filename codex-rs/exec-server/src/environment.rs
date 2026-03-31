@@ -57,6 +57,7 @@ pub struct Environment {
     exec_server_url: Option<String>,
     remote_exec_server_client: Option<ExecServerClient>,
     exec_backend: Arc<dyn ExecBackend>,
+    has_attached_executor: bool,
 }
 
 impl Default for Environment {
@@ -73,6 +74,7 @@ impl Default for Environment {
             exec_server_url: None,
             remote_exec_server_client: None,
             exec_backend: Arc::new(local_process),
+            has_attached_executor: true,
         }
     }
 }
@@ -88,6 +90,12 @@ impl std::fmt::Debug for Environment {
 impl Environment {
     pub async fn create(exec_server_url: Option<String>) -> Result<Self, ExecServerError> {
         let exec_server_url = normalize_exec_server_url(exec_server_url);
+        let has_attached_executor = !matches!(exec_server_url.as_deref(), Some("none"));
+        let exec_server_url = if has_attached_executor {
+            exec_server_url
+        } else {
+            None
+        };
         let remote_exec_server_client = if let Some(url) = &exec_server_url {
             Some(
                 ExecServerClient::connect_websocket(RemoteExecServerConnectArgs {
@@ -120,6 +128,7 @@ impl Environment {
             exec_server_url,
             remote_exec_server_client,
             exec_backend,
+            has_attached_executor,
         })
     }
 
@@ -129,6 +138,15 @@ impl Environment {
 
     pub fn get_exec_backend(&self) -> Arc<dyn ExecBackend> {
         Arc::clone(&self.exec_backend)
+    }
+
+    pub fn has_attached_executor(&self) -> bool {
+        self.has_attached_executor
+    }
+
+    pub fn with_attached_executor(mut self, has_attached_executor: bool) -> Self {
+        self.has_attached_executor = has_attached_executor;
+        self
     }
 
     pub fn get_filesystem(&self) -> Arc<dyn ExecutorFileSystem> {
@@ -177,6 +195,17 @@ mod tests {
         let manager = EnvironmentManager::new(Some(String::new()));
 
         assert_eq!(manager.exec_server_url(), None);
+    }
+
+    #[tokio::test]
+    async fn create_with_none_url_disables_attached_executor() {
+        let environment = Environment::create(Some("none".to_string()))
+            .await
+            .expect("create environment");
+
+        assert_eq!(environment.exec_server_url(), None);
+        assert!(!environment.has_attached_executor());
+        assert!(environment.remote_exec_server_client.is_none());
     }
 
     #[tokio::test]

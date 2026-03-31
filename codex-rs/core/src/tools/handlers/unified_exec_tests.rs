@@ -1,4 +1,5 @@
 use super::*;
+use crate::codex::make_session_and_context;
 use crate::shell::default_user_shell;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::tools::handlers::resolve_workdir_base_path;
@@ -11,12 +12,12 @@ use std::fs;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-use crate::codex::make_session_and_context;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolHandler;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_exec_server::Environment;
 use tokio::sync::Mutex;
 
 #[test]
@@ -217,6 +218,38 @@ async fn exec_command_pre_tool_use_payload_uses_raw_command() {
         Some(crate::tools::registry::PreToolUsePayload {
             command: "printf exec command".to_string(),
         })
+    );
+}
+
+#[tokio::test]
+async fn exec_command_rejects_without_attached_executor() {
+    let (session, mut turn) = make_session_and_context().await;
+    turn.environment = Arc::new(Environment::default().with_attached_executor(false));
+    let handler = UnifiedExecHandler;
+
+    let err = match handler
+        .handle(ToolInvocation {
+            session: Arc::new(session),
+            turn: Arc::new(turn),
+            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+            call_id: "call-no-executor".to_string(),
+            tool_name: "exec_command".to_string(),
+            tool_namespace: None,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({ "cmd": "pwd" }).to_string(),
+            },
+        })
+        .await
+    {
+        Ok(_) => panic!("exec_command should fail without an attached executor"),
+        Err(err) => err,
+    };
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "exec_command is unavailable because no executor is attached".to_string()
+        )
     );
 }
 

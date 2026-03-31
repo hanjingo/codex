@@ -34,6 +34,7 @@ use crate::sandboxing::SandboxPermissions;
 pub(crate) use crate::tools::code_mode::CodeModeExecuteHandler;
 pub(crate) use crate::tools::code_mode::CodeModeWaitHandler;
 pub use apply_patch::ApplyPatchHandler;
+use codex_exec_server::Environment;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
@@ -92,6 +93,19 @@ fn resolve_workdir_base_path(
             || default_cwd.to_path_buf(),
             |workdir| crate::util::resolve_path(default_cwd, &workdir),
         ))
+}
+
+fn require_attached_executor(
+    environment: &Environment,
+    tool_name: &str,
+) -> Result<(), FunctionCallError> {
+    if environment.has_attached_executor() {
+        Ok(())
+    } else {
+        Err(FunctionCallError::RespondToModel(format!(
+            "{tool_name} is unavailable because no executor is attached"
+        )))
+    }
 }
 
 /// Validates feature/policy constraints for `with_additional_permissions` and

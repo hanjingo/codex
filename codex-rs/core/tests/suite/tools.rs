@@ -281,7 +281,10 @@ async fn sandbox_denied_shell_returns_original_output() -> Result<()> {
     Ok(())
 }
 
-async fn collect_tools(use_unified_exec: bool) -> Result<Vec<String>> {
+async fn collect_tools(
+    use_unified_exec: bool,
+    exec_server_url: Option<&str>,
+) -> Result<Vec<String>> {
     let server = start_mock_server().await;
 
     let responses = vec![sse(vec![
@@ -304,6 +307,9 @@ async fn collect_tools(use_unified_exec: bool) -> Result<Vec<String>> {
                 .expect("test config should allow feature update");
         }
     });
+    if let Some(exec_server_url) = exec_server_url {
+        builder = builder.with_exec_server_url(exec_server_url);
+    }
     let test = builder.build(&server).await?;
 
     test.submit_turn_with_policies(
@@ -321,7 +327,10 @@ async fn collect_tools(use_unified_exec: bool) -> Result<Vec<String>> {
 async fn unified_exec_spec_toggle_end_to_end() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let tools_disabled = collect_tools(/*use_unified_exec*/ false).await?;
+    let tools_disabled = collect_tools(
+        /*use_unified_exec*/ false, /*exec_server_url*/ None,
+    )
+    .await?;
     assert!(
         !tools_disabled.iter().any(|name| name == "exec_command"),
         "tools list should not include exec_command when disabled: {tools_disabled:?}"
@@ -331,7 +340,10 @@ async fn unified_exec_spec_toggle_end_to_end() -> Result<()> {
         "tools list should not include write_stdin when disabled: {tools_disabled:?}"
     );
 
-    let tools_enabled = collect_tools(/*use_unified_exec*/ true).await?;
+    let tools_enabled = collect_tools(
+        /*use_unified_exec*/ true, /*exec_server_url*/ None,
+    )
+    .await?;
     assert!(
         tools_enabled.iter().any(|name| name == "exec_command"),
         "tools list should include exec_command when enabled: {tools_enabled:?}"
@@ -339,6 +351,36 @@ async fn unified_exec_spec_toggle_end_to_end() -> Result<()> {
     assert!(
         tools_enabled.iter().any(|name| name == "write_stdin"),
         "tools list should include write_stdin when enabled: {tools_enabled:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attached_executor_none_hides_env_bound_tools_end_to_end() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let tools = collect_tools(/*use_unified_exec*/ true, Some("none")).await?;
+
+    assert!(
+        tools.iter().any(|name| name == "update_plan"),
+        "tools list should still include orchestrator tools: {tools:?}"
+    );
+    assert!(
+        !tools.iter().any(|name| name == "exec_command"),
+        "tools list should not include exec_command when executor is none: {tools:?}"
+    );
+    assert!(
+        !tools.iter().any(|name| name == "write_stdin"),
+        "tools list should not include write_stdin when executor is none: {tools:?}"
+    );
+    assert!(
+        !tools.iter().any(|name| name == "apply_patch"),
+        "tools list should not include apply_patch when executor is none: {tools:?}"
+    );
+    assert!(
+        !tools.iter().any(|name| name == "view_image"),
+        "tools list should not include view_image when executor is none: {tools:?}"
     );
 
     Ok(())

@@ -1586,6 +1586,57 @@ fn test_build_specs_default_shell_present() {
 }
 
 #[test]
+fn test_build_specs_without_attached_executor_omits_env_bound_tools() {
+    let features = Features::with_defaults();
+    let model_info = model_info_from_models_json("gpt-5.1-codex");
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        sandbox_policy: &SandboxPolicy::DangerFullAccess,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_attached_executor(false);
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*app_tools*/ None,
+        &[],
+    )
+    .build();
+
+    assert_contains_tool_names(
+        &tools,
+        &[
+            "update_plan",
+            "request_user_input",
+            "web_search",
+            "spawn_agent",
+            "send_input",
+            "resume_agent",
+            "wait_agent",
+            "close_agent",
+        ],
+    );
+    for absent in [
+        "shell",
+        "local_shell",
+        "shell_command",
+        "exec_command",
+        "write_stdin",
+        "apply_patch",
+        "list_dir",
+        "view_image",
+        "request_permissions",
+    ] {
+        assert_lacks_tool_name(&tools, absent);
+    }
+}
+
+#[test]
 fn shell_zsh_fork_prefers_shell_command_over_unified_exec() {
     let config = test_config();
     let model_info = ModelsManager::construct_model_info_offline_for_tests("o3", &config);

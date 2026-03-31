@@ -145,6 +145,7 @@ impl UnifiedExecShellMode {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolsConfig {
     pub available_models: Vec<ModelPreset>,
+    pub has_attached_executor: bool,
     pub shell_type: ConfigShellToolType,
     shell_command_backend: ShellCommandBackendConfig,
     pub unified_exec_shell_mode: UnifiedExecShellMode,
@@ -279,6 +280,7 @@ impl ToolsConfig {
 
         Self {
             available_models: available_models_ref.to_vec(),
+            has_attached_executor: true,
             shell_type,
             shell_command_backend,
             unified_exec_shell_mode: UnifiedExecShellMode::Direct,
@@ -310,6 +312,11 @@ impl ToolsConfig {
 
     pub fn with_agent_roles(mut self, agent_roles: BTreeMap<String, AgentRoleConfig>) -> Self {
         self.agent_roles = agent_roles;
+        self
+    }
+
+    pub fn with_attached_executor(mut self, has_attached_executor: bool) -> Self {
+        self.has_attached_executor = has_attached_executor;
         self
     }
 
@@ -493,61 +500,63 @@ pub(crate) fn build_specs_with_discoverable_tools(
         builder.register_handler(WAIT_TOOL_NAME, code_mode_wait_handler);
     }
 
-    match &config.shell_type {
-        ConfigShellToolType::Default => {
-            push_tool_spec(
-                &mut builder,
-                create_shell_tool(ShellToolOptions {
-                    exec_permission_approvals_enabled,
-                }),
-                /*supports_parallel_tool_calls*/ true,
-                config.code_mode_enabled,
-            );
-        }
-        ConfigShellToolType::Local => {
-            push_tool_spec(
-                &mut builder,
-                ToolSpec::LocalShell {},
-                /*supports_parallel_tool_calls*/ true,
-                config.code_mode_enabled,
-            );
-        }
-        ConfigShellToolType::UnifiedExec => {
-            push_tool_spec(
-                &mut builder,
-                create_exec_command_tool(CommandToolOptions {
-                    allow_login_shell: config.allow_login_shell,
-                    exec_permission_approvals_enabled,
-                }),
-                /*supports_parallel_tool_calls*/ true,
-                config.code_mode_enabled,
-            );
-            push_tool_spec(
-                &mut builder,
-                create_write_stdin_tool(),
-                /*supports_parallel_tool_calls*/ false,
-                config.code_mode_enabled,
-            );
-            builder.register_handler("exec_command", unified_exec_handler.clone());
-            builder.register_handler("write_stdin", unified_exec_handler);
-        }
-        ConfigShellToolType::Disabled => {
-            // Do nothing.
-        }
-        ConfigShellToolType::ShellCommand => {
-            push_tool_spec(
-                &mut builder,
-                create_shell_command_tool(CommandToolOptions {
-                    allow_login_shell: config.allow_login_shell,
-                    exec_permission_approvals_enabled,
-                }),
-                /*supports_parallel_tool_calls*/ true,
-                config.code_mode_enabled,
-            );
+    if config.has_attached_executor {
+        match &config.shell_type {
+            ConfigShellToolType::Default => {
+                push_tool_spec(
+                    &mut builder,
+                    create_shell_tool(ShellToolOptions {
+                        exec_permission_approvals_enabled,
+                    }),
+                    /*supports_parallel_tool_calls*/ true,
+                    config.code_mode_enabled,
+                );
+            }
+            ConfigShellToolType::Local => {
+                push_tool_spec(
+                    &mut builder,
+                    ToolSpec::LocalShell {},
+                    /*supports_parallel_tool_calls*/ true,
+                    config.code_mode_enabled,
+                );
+            }
+            ConfigShellToolType::UnifiedExec => {
+                push_tool_spec(
+                    &mut builder,
+                    create_exec_command_tool(CommandToolOptions {
+                        allow_login_shell: config.allow_login_shell,
+                        exec_permission_approvals_enabled,
+                    }),
+                    /*supports_parallel_tool_calls*/ true,
+                    config.code_mode_enabled,
+                );
+                push_tool_spec(
+                    &mut builder,
+                    create_write_stdin_tool(),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+                builder.register_handler("exec_command", unified_exec_handler.clone());
+                builder.register_handler("write_stdin", unified_exec_handler);
+            }
+            ConfigShellToolType::Disabled => {
+                // Do nothing.
+            }
+            ConfigShellToolType::ShellCommand => {
+                push_tool_spec(
+                    &mut builder,
+                    create_shell_command_tool(CommandToolOptions {
+                        allow_login_shell: config.allow_login_shell,
+                        exec_permission_approvals_enabled,
+                    }),
+                    /*supports_parallel_tool_calls*/ true,
+                    config.code_mode_enabled,
+                );
+            }
         }
     }
 
-    if config.shell_type != ConfigShellToolType::Disabled {
+    if config.has_attached_executor && config.shell_type != ConfigShellToolType::Disabled {
         // Always register shell aliases so older prompts remain compatible.
         builder.register_handler("shell", shell_handler.clone());
         builder.register_handler("container.exec", shell_handler.clone());
@@ -616,7 +625,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
         builder.register_handler("request_user_input", request_user_input_handler);
     }
 
-    if config.request_permissions_tool_enabled {
+    if config.has_attached_executor && config.request_permissions_tool_enabled {
         push_tool_spec(
             &mut builder,
             create_request_permissions_tool(request_permissions_tool_description()),
@@ -661,7 +670,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
         builder.register_handler(TOOL_SUGGEST_TOOL_NAME, tool_suggest_handler);
     }
 
-    if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
+    if config.has_attached_executor
+        && let Some(apply_patch_tool_type) = &config.apply_patch_tool_type
+    {
         match apply_patch_tool_type {
             ApplyPatchToolType::Freeform => {
                 push_tool_spec(
@@ -683,10 +694,11 @@ pub(crate) fn build_specs_with_discoverable_tools(
         builder.register_handler("apply_patch", apply_patch_handler);
     }
 
-    if config
-        .experimental_supported_tools
-        .iter()
-        .any(|tool| tool == "list_dir")
+    if config.has_attached_executor
+        && config
+            .experimental_supported_tools
+            .iter()
+            .any(|tool| tool == "list_dir")
     {
         let list_dir_handler = Arc::new(ListDirHandler);
         push_tool_spec(
@@ -763,15 +775,17 @@ pub(crate) fn build_specs_with_discoverable_tools(
         );
     }
 
-    push_tool_spec(
-        &mut builder,
-        create_view_image_tool(ViewImageToolOptions {
-            can_request_original_image_detail: config.can_request_original_image_detail,
-        }),
-        /*supports_parallel_tool_calls*/ true,
-        config.code_mode_enabled,
-    );
-    builder.register_handler("view_image", view_image_handler);
+    if config.has_attached_executor {
+        push_tool_spec(
+            &mut builder,
+            create_view_image_tool(ViewImageToolOptions {
+                can_request_original_image_detail: config.can_request_original_image_detail,
+            }),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        builder.register_handler("view_image", view_image_handler);
+    }
 
     if config.collab_tools {
         if config.multi_agent_v2 {

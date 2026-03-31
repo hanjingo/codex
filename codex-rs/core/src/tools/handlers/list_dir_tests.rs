@@ -1,6 +1,14 @@
 use super::*;
+use crate::codex::make_session_and_context;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_exec_server::Environment;
 use pretty_assertions::assert_eq;
+use std::sync::Arc;
 use tempfile::tempdir;
+use tokio::sync::Mutex;
 
 #[tokio::test]
 async fn lists_directory_entries() {
@@ -60,6 +68,41 @@ async fn lists_directory_entries() {
     ];
 
     assert_eq!(entries, expected);
+}
+
+#[tokio::test]
+async fn list_dir_rejects_without_attached_executor() {
+    let (session, mut turn) = make_session_and_context().await;
+    turn.environment = Arc::new(Environment::default().with_attached_executor(false));
+    let handler = ListDirHandler;
+
+    let err = match handler
+        .handle(ToolInvocation {
+            session: Arc::new(session),
+            turn: Arc::new(turn),
+            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+            call_id: "call-no-executor".to_string(),
+            tool_name: "list_dir".to_string(),
+            tool_namespace: None,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "dir_path": tempdir().expect("create tempdir").path().display().to_string()
+                })
+                .to_string(),
+            },
+        })
+        .await
+    {
+        Ok(_) => panic!("list_dir should fail without an attached executor"),
+        Err(err) => err,
+    };
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "list_dir is unavailable because no executor is attached".to_string()
+        )
+    );
 }
 
 #[tokio::test]

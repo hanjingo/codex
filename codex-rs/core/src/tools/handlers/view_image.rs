@@ -18,6 +18,7 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::handlers::require_attached_executor;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
@@ -64,6 +65,7 @@ impl ToolHandler for ViewImageHandler {
             call_id,
             ..
         } = invocation;
+        require_attached_executor(turn.environment.as_ref(), "view_image")?;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,

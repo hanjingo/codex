@@ -16,6 +16,7 @@ use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
+use crate::tools::handlers::require_attached_executor;
 use crate::tools::handlers::resolve_workdir_base_path;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
@@ -180,6 +181,7 @@ impl ToolHandler for UnifiedExecHandler {
 
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
         let context = UnifiedExecContext::new(session.clone(), turn.clone(), call_id.clone());
+        require_attached_executor(turn.environment.as_ref(), tool_name.as_str())?;
 
         let response = match tool_name.as_str() {
             "exec_command" => {

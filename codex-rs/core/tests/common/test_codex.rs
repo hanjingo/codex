@@ -327,6 +327,7 @@ pub struct TestCodexBuilder {
     pre_build_hooks: Vec<Box<PreBuildHook>>,
     home: Option<Arc<TempDir>>,
     user_shell_override: Option<Shell>,
+    exec_server_url_override: Option<String>,
 }
 
 impl TestCodexBuilder {
@@ -365,6 +366,11 @@ impl TestCodexBuilder {
 
     pub fn with_user_shell(mut self, user_shell: Shell) -> Self {
         self.user_shell_override = Some(user_shell);
+        self
+    }
+
+    pub fn with_exec_server_url(mut self, exec_server_url: impl Into<String>) -> Self {
+        self.exec_server_url_override = Some(exec_server_url.into());
         self
     }
 
@@ -479,7 +485,9 @@ impl TestCodexBuilder {
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
         let environment_manager = Arc::new(codex_exec_server::EnvironmentManager::new(
-            test_env.exec_server_url().map(str::to_owned),
+            self.exec_server_url_override
+                .clone()
+                .or_else(|| test_env.exec_server_url().map(str::to_owned)),
         ));
         let thread_manager = if config.model_catalog.is_some() {
             ThreadManager::new(
@@ -907,6 +915,7 @@ pub fn test_codex() -> TestCodexBuilder {
         pre_build_hooks: vec![],
         home: None,
         user_shell_override: None,
+        exec_server_url_override: None,
     }
 }
 

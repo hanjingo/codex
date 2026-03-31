@@ -20,6 +20,7 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::handlers::require_attached_executor;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -159,6 +160,7 @@ impl ToolHandler for ApplyPatchHandler {
             payload,
             ..
         } = invocation;
+        require_attached_executor(turn.environment.as_ref(), tool_name.as_str())?;
 
         let patch_input = match payload {
             ToolPayload::Function { arguments } => {

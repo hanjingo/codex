@@ -2784,6 +2784,37 @@ async fn notify_request_permissions_response_ignores_unmatched_call_id() {
 }
 
 #[tokio::test]
+async fn with_model_rebuilds_tools_config_without_attached_executor() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.environment =
+        Arc::new(codex_exec_server::Environment::default().with_attached_executor(false));
+
+    let rebuilt_turn = turn_context
+        .with_model(
+            turn_context.model_info.slug.clone(),
+            session.services.models_manager.as_ref(),
+        )
+        .await;
+
+    assert!(!rebuilt_turn.tools_config.has_attached_executor);
+
+    let router = ToolRouter::from_config(
+        &rebuilt_turn.tools_config,
+        crate::tools::router::ToolRouterParams {
+            mcp_tools: None,
+            app_tools: None,
+            discoverable_tools: None,
+            dynamic_tools: rebuilt_turn.dynamic_tools.as_slice(),
+        },
+    );
+
+    assert!(router.find_spec("update_plan").is_some());
+    assert!(router.find_spec("exec_command").is_none());
+    assert!(router.find_spec("apply_patch").is_none());
+    assert!(router.find_spec("view_image").is_none());
+}
+
+#[tokio::test]
 async fn request_permissions_emits_event_when_granular_policy_allows_requests() {
     let (session, mut turn_context, rx) = make_session_and_context_with_rx().await;
     *session.active_turn.lock().await = Some(ActiveTurn::default());

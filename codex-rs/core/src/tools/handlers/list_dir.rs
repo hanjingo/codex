@@ -14,6 +14,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::parse_arguments;
+use crate::tools::handlers::require_attached_executor;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
@@ -54,7 +55,8 @@ impl ToolHandler for ListDirHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+        let ToolInvocation { turn, payload, .. } = invocation;
+        require_attached_executor(turn.environment.as_ref(), "list_dir")?;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
