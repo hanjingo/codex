@@ -18,7 +18,6 @@ use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use pretty_assertions::assert_eq;
-use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
 use std::time::Duration;
@@ -85,7 +84,21 @@ fn cache_prefix_request_body(request: &ResponsesRequest, call_id: &str) -> Value
         .unwrap_or_else(|| {
             panic!("expected request input to include function_call {call_id}: {input:?}")
         });
-    input.truncate(spawn_call_index + 1);
+    let spawn_output_index = input
+        .iter()
+        .position(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+        })
+        .unwrap_or_else(|| {
+            panic!("expected request input to include function_call_output {call_id}: {input:?}")
+        });
+    assert_eq!(
+        spawn_output_index,
+        spawn_call_index + 1,
+        "spawn_agent output must be the first post-call input item"
+    );
+    input.truncate(spawn_output_index);
 
     if let Some(tools) = object.get_mut("tools") {
         *tools = normalize_tools_for_cache_prefix(tools);
@@ -110,20 +123,6 @@ fn normalize_tool_for_cache_prefix(tool: &Value) -> Option<Value> {
         .unwrap_or_else(|| panic!("expected tool object: {tool:?}"))
         .clone();
 
-    if normalized
-        .get("defer_loading")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return match normalized.get("type").and_then(Value::as_str) {
-            Some("function") => {
-                normalized.remove("parameters");
-                Some(Value::Object(normalized))
-            }
-            _ => None,
-        };
-    }
-
     if normalized.get("type").and_then(Value::as_str) == Some("namespace")
         && let Some(namespace_tools) = normalized.get("tools")
     {
@@ -131,6 +130,15 @@ fn normalize_tool_for_cache_prefix(tool: &Value) -> Option<Value> {
             "tools".to_string(),
             normalize_namespace_tools_for_cache_prefix(namespace_tools),
         );
+    }
+
+    if normalized
+        .get("defer_loading")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && normalized.get("type").and_then(Value::as_str) == Some("function")
+    {
+        normalized.remove("parameters");
     }
 
     Some(Value::Object(normalized))
@@ -142,7 +150,7 @@ fn normalize_namespace_tools_for_cache_prefix(tools: &Value) -> Value {
         .unwrap_or_else(|| panic!("expected namespace tools array: {tools:?}"))
         .iter()
         .filter_map(|tool| {
-            let tool_object: Map<String, Value> = tool
+            let tool_object = tool
                 .as_object()
                 .unwrap_or_else(|| panic!("expected namespace tool object: {tool:?}"))
                 .clone();
@@ -150,6 +158,7 @@ fn normalize_namespace_tools_for_cache_prefix(tools: &Value) -> Value {
                 .get("defer_loading")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
+                && tool_object.get("type").and_then(Value::as_str) == Some("function")
             {
                 None
             } else {
@@ -160,17 +169,23 @@ fn normalize_namespace_tools_for_cache_prefix(tools: &Value) -> Value {
     Value::Array(normalized_tools)
 }
 
-fn input_index_for_call_output(request: &ResponsesRequest, call_id: &str) -> usize {
-    let input = request.input();
-    input
-        .iter()
-        .position(|item| {
+fn function_call_output_texts(request: &ResponsesRequest, call_id: &str) -> Vec<Option<String>> {
+    request
+        .input()
+        .into_iter()
+        .filter(|item| {
             item.get("type").and_then(Value::as_str) == Some("function_call_output")
                 && item.get("call_id").and_then(Value::as_str) == Some(call_id)
         })
-        .unwrap_or_else(|| {
-            panic!("expected request input to include function_call_output {call_id}: {input:?}")
+        .map(|item| match item.get("output") {
+            Some(Value::String(text)) => Some(text.to_string()),
+            Some(Value::Object(output)) => output
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            _ => None,
         })
+        .collect()
 }
 
 fn tool_parameter_description(
@@ -505,31 +520,10 @@ async fn spawned_child_receives_forked_parent_context() -> Result<()> {
         "forked child requests must preserve every cache-relevant request field and the conversation-item prefix exactly through the shared spawn_agent call; namespace shells and non-deferred tools must stay stable, while deferred namespace members may only appear after tool_search_output"
     );
     assert_eq!(
-        input_index_for_call_output(parent_followup_request, SPAWN_CALL_ID),
-        input_index_for_call_output(&child_request, SPAWN_CALL_ID),
-        "the first legal parent/child input divergence is the spawn_agent tool response, so the spawn_agent function_call_output must appear at the same index in both requests"
+        function_call_output_texts(&child_request, SPAWN_CALL_ID),
+        vec![Some(FORKED_SPAWN_AGENT_OUTPUT_MESSAGE.to_string())],
+        "the forked child request must replace the parent-visible spawn_agent output with exactly one child-side synthetic fork marker"
     );
-
-    let child_body = child_request.body_json();
-    let function_call_output = child_body["input"]
-        .as_array()
-        .and_then(|items| {
-            items.iter().find(|item| {
-                item["type"].as_str() == Some("function_call_output")
-                    && item["call_id"].as_str() == Some(SPAWN_CALL_ID)
-            })
-        })
-        .unwrap_or_else(|| panic!("expected forked child request to include spawn_agent output"));
-    let (content, success) = match &function_call_output["output"] {
-        serde_json::Value::String(text) => (Some(text.as_str()), None),
-        serde_json::Value::Object(output) => (
-            output.get("content").and_then(serde_json::Value::as_str),
-            output.get("success").and_then(serde_json::Value::as_bool),
-        ),
-        _ => (None, None),
-    };
-    assert_eq!(content, Some(FORKED_SPAWN_AGENT_OUTPUT_MESSAGE));
-    assert_ne!(success, Some(false));
 
     Ok(())
 }
