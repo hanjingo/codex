@@ -18,6 +18,8 @@ use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use pretty_assertions::assert_eq;
+use serde_json::Map;
+use serde_json::Value;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -63,37 +65,112 @@ fn has_subagent_notification(req: &ResponsesRequest) -> bool {
         .any(|text| text.contains("<subagent_notification>"))
 }
 
-fn decoded_body_prefix_before_function_call_output(
-    request: &ResponsesRequest,
-    call_id: &str,
-) -> Vec<u8> {
-    let marker = format!(r#"{{"call_id":"{call_id}","output":"#);
-    let body = request.decoded_body_bytes();
-    let marker_offset = body
-        .windows(marker.len())
-        .position(|window| window == marker.as_bytes())
+fn cache_prefix_request_body(request: &ResponsesRequest, call_id: &str) -> Value {
+    let mut body = request.body_json();
+    let object = body
+        .as_object_mut()
+        .expect("expected JSON object request body");
+    object.remove("prompt_cache_key");
+
+    let input = object
+        .get_mut("input")
+        .and_then(Value::as_array_mut)
+        .expect("expected request input array");
+    let spawn_call_index = input
+        .iter()
+        .position(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call")
+                && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+        })
         .unwrap_or_else(|| {
-            panic!(
-                "expected request body to contain function_call_output marker {marker:?}: {}",
-                String::from_utf8_lossy(&body)
-            )
+            panic!("expected request input to include function_call {call_id}: {input:?}")
         });
-    body[..marker_offset].to_vec()
+    input.truncate(spawn_call_index + 1);
+
+    if let Some(tools) = object.get_mut("tools") {
+        *tools = normalize_tools_for_cache_prefix(tools);
+    }
+
+    body
 }
 
-fn decoded_body_suffix_from_tools(request: &ResponsesRequest) -> Vec<u8> {
-    let body = request.decoded_body_bytes();
-    let marker = br#""tools":["#;
-    let marker_offset = body
-        .windows(marker.len())
-        .position(|window| window == marker)
+fn normalize_tools_for_cache_prefix(tools: &Value) -> Value {
+    let normalized_tools = tools
+        .as_array()
+        .unwrap_or_else(|| panic!("expected tools array: {tools:?}"))
+        .iter()
+        .filter_map(normalize_tool_for_cache_prefix)
+        .collect::<Vec<_>>();
+    Value::Array(normalized_tools)
+}
+
+fn normalize_tool_for_cache_prefix(tool: &Value) -> Option<Value> {
+    let mut normalized = tool
+        .as_object()
+        .unwrap_or_else(|| panic!("expected tool object: {tool:?}"))
+        .clone();
+
+    if normalized
+        .get("defer_loading")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return match normalized.get("type").and_then(Value::as_str) {
+            Some("function") => {
+                normalized.remove("parameters");
+                Some(Value::Object(normalized))
+            }
+            _ => None,
+        };
+    }
+
+    if normalized.get("type").and_then(Value::as_str) == Some("namespace")
+        && let Some(namespace_tools) = normalized.get("tools")
+    {
+        normalized.insert(
+            "tools".to_string(),
+            normalize_namespace_tools_for_cache_prefix(namespace_tools),
+        );
+    }
+
+    Some(Value::Object(normalized))
+}
+
+fn normalize_namespace_tools_for_cache_prefix(tools: &Value) -> Value {
+    let normalized_tools = tools
+        .as_array()
+        .unwrap_or_else(|| panic!("expected namespace tools array: {tools:?}"))
+        .iter()
+        .filter_map(|tool| {
+            let tool_object: Map<String, Value> = tool
+                .as_object()
+                .unwrap_or_else(|| panic!("expected namespace tool object: {tool:?}"))
+                .clone();
+            if tool_object
+                .get("defer_loading")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                None
+            } else {
+                normalize_tool_for_cache_prefix(&Value::Object(tool_object))
+            }
+        })
+        .collect::<Vec<_>>();
+    Value::Array(normalized_tools)
+}
+
+fn input_index_for_call_output(request: &ResponsesRequest, call_id: &str) -> usize {
+    let input = request.input();
+    input
+        .iter()
+        .position(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+        })
         .unwrap_or_else(|| {
-            panic!(
-                "expected request body to contain tools marker: {}",
-                String::from_utf8_lossy(&body)
-            )
-        });
-    body[marker_offset..].to_vec()
+            panic!("expected request input to include function_call_output {call_id}: {input:?}")
+        })
 }
 
 fn tool_parameter_description(
@@ -423,14 +500,14 @@ async fn spawned_child_receives_forked_parent_context() -> Result<()> {
     assert!(child_request.body_contains_text(TURN_0_FORK_PROMPT));
     assert!(child_request.body_contains_text("seeded"));
     assert_eq!(
-        decoded_body_prefix_before_function_call_output(parent_followup_request, SPAWN_CALL_ID),
-        decoded_body_prefix_before_function_call_output(&child_request, SPAWN_CALL_ID),
-        "forked child request must preserve the parent request byte-for-byte through the spawn_agent call; first divergence may only start at the spawn_agent tool response"
+        cache_prefix_request_body(parent_followup_request, SPAWN_CALL_ID),
+        cache_prefix_request_body(&child_request, SPAWN_CALL_ID),
+        "forked child requests must preserve every cache-relevant request field and the conversation-item prefix exactly through the shared spawn_agent call; namespace shells and non-deferred tools must stay stable, while deferred namespace members may only appear after tool_search_output"
     );
     assert_eq!(
-        decoded_body_suffix_from_tools(parent_followup_request),
-        decoded_body_suffix_from_tools(&child_request),
-        "parent and forked child requests must expose an identical serialized tools suffix, so adding/removing namespace shells cannot invalidate cache layout"
+        input_index_for_call_output(parent_followup_request, SPAWN_CALL_ID),
+        input_index_for_call_output(&child_request, SPAWN_CALL_ID),
+        "the first legal parent/child input divergence is the spawn_agent tool response, so the spawn_agent function_call_output must appear at the same index in both requests"
     );
 
     let child_body = child_request.body_json();
